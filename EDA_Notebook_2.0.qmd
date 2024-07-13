@@ -1,0 +1,352 @@
+---
+title: "EDA_Notebook_2.0"
+format: html
+editor: visual
+---
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(dplyr)
+
+# Load datasets
+cab_data <- read_csv('https://raw.githubusercontent.com/DataGlacier/DataSets/master/Cab_Data.csv')
+customer_data <- read_csv('https://raw.githubusercontent.com/DataGlacier/DataSets/master/Customer_ID.csv')
+transaction_data <- read_csv('https://raw.githubusercontent.com/DataGlacier/DataSets/master/Transaction_ID.csv')
+city_data <- read_csv('https://raw.githubusercontent.com/DataGlacier/DataSets/master/City.csv')
+```
+
+```{r}
+# Sample holiday data
+holiday_data <- tibble(
+  Date = as.Date(c('2016-01-01', '2016-07-04', '2016-12-25', '2017-01-01', '2017-07-04', '2017-12-25', 
+                   '2018-01-01', '2018-07-04', '2018-12-25')),
+  Holiday = c('New Year', 'Independence Day', 'Christmas', 'New Year', 'Independence Day', 'Christmas', 
+              'New Year', 'Independence Day', 'Christmas')
+)
+```
+
+```{r}
+# Data Cleaning and Preparation
+cab_data <- cab_data %>% distinct()
+customer_data <- customer_data %>% distinct()
+transaction_data <- transaction_data %>% distinct()
+city_data <- city_data %>% distinct()
+
+# Convert 'Date of Travel' to Date format
+cab_data <- cab_data %>%
+  mutate(`Date of Travel` = as.Date(`Date of Travel`, origin = '1899-12-30'))
+
+# Filter data within the correct timeframe
+cab_data <- cab_data %>%
+  filter(`Date of Travel` >= as.Date('2016-01-31') & `Date of Travel` <= as.Date('2018-12-31'))
+```
+
+```{r}
+merged_data <- transaction_data %>%
+  left_join(customer_data, by = 'Customer ID') %>%
+  left_join(cab_data, by = 'Transaction ID') %>%
+  left_join(city_data, by = 'City') %>%
+  left_join(holiday_data, by = c('Date of Travel' = 'Date'))
+
+# Identify rows with NA in 'Company' column
+na_companies <- merged_data %>% filter(is.na(Company))
+print("Rows with NA in 'Company':")
+print(na_companies)
+
+# Verify the merge
+# Ensure the transaction_data has 'Transaction ID' and 'Company'
+print("Transaction Data Sample:")
+print(head(transaction_data))
+
+# Ensure the cab_data has 'Transaction ID' and 'Company'
+print("Cab Data Sample:")
+print(head(cab_data))
+
+# Re-perform the merge with proper keys
+merged_data <- transaction_data %>%
+  left_join(customer_data, by = 'Customer ID') %>%
+  left_join(cab_data, by = 'Transaction ID') %>%
+  left_join(city_data, by = 'City') %>%
+  left_join(holiday_data, by = c('Date of Travel' = 'Date'))
+
+# Check for NA values again
+na_companies <- merged_data %>% filter(is.na(Company))
+print("Rows with NA in 'Company' after re-merge:")
+print(na_companies)
+
+```
+
+```{r}
+# Option 1: Remove rows with NA in 'Company'
+merged_data <- merged_data %>% filter(!is.na(Company))
+
+# Option 2: Replace NA values with 'Unknown'
+# merged_data <- merged_data %>% mutate(Company = ifelse(is.na(Company), 'Unknown', Company))
+
+# Verify the correction
+print("Rows with NA in 'Company' after handling NA values:")
+print(merged_data %>% filter(is.na(Company)))
+# Ensure 'Holiday' column is present before filling NA values
+if ('Holiday' %in% colnames(merged_data)) {
+  merged_data$Holiday[is.na(merged_data$Holiday)] <- 'Non-Holiday'
+}
+
+# Inspect merged data to ensure 'Holiday' column is properly labeled
+print("Merged Data Sample:")
+print(head(merged_data))
+
+
+```
+
+#### Hypothesis 1: The number of cab trips is higher on holidays compared to non-holidays.
+
+-   This hypothesis suggests that people are more likely to use cab services during holidays, potentially due to increased social activities, travel, or events.
+
+```{r}
+# Plotting Cab Usage on Holidays vs Non-Holidays
+ggplot(merged_data, aes(x = Holiday, fill = Company)) +
+  geom_bar(position = "dodge") +
+  labs(title = 'Number of Trips on Holidays vs Non-Holidays by Company') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save the plot
+ggsave("holiday_vs_nonholiday_fixed.png")
+
+
+```
+
+Hypothesis results: Since there are less Holidays than Non-Holidays, the number of cab trips during Holidays is significantly lesser than during Non-Holidays. However, in each section on the x-axis, the number of cab trips of Yellow Cab company seems to surpass the Pink Cab company.
+
+#### Hypothesis 2: The customer retention rate is higher for one cab company compared to the other.
+
+-   This hypothesis aims to identify which cab company has better customer loyalty. A higher retention rate indicates that customers prefer to use the same cab service repeatedly.
+
+```{r}
+# Calculate the number of trips per customer
+customer_trips <- merged_data %>%
+  group_by(`Customer ID`, Company) %>%
+  summarise(TripCount = n()) %>%
+  ungroup()
+
+# Determine customers with more than one trip
+customer_retention <- customer_trips %>%
+  filter(TripCount > 1) %>%
+  group_by(Company) %>%
+  summarise(RetainedCustomers = n())
+
+# Plot customer retention rate by company
+ggplot(customer_retention, aes(x = Company, y = RetainedCustomers, fill = Company)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = 'Customer Retention Rate by Company', y = 'Number of Retained Customers') +
+  theme_minimal()
+
+# Save the plot
+ggsave("customer_retention_rate.png")
+
+```
+
+Hypothesis results: The number of retained customers of Yellow Cab company is larger than the Pink Cab's. In other words, Yellow Cab has a higher rate than Pink Cab.
+
+#### Hypothesis 3: The average revenue per trip varies significantly between different cities.
+
+-   This hypothesis posits that the revenue generated from each trip can differ from city to city, potentially due to factors like city size, economic status, and demand for cab services.
+
+```{r}
+# Calculate average revenue per trip by city
+avg_revenue_city <- merged_data %>%
+  group_by(City) %>%
+  summarise(AvgRevenue = mean(`Price Charged`, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot average revenue per trip by city
+ggplot(avg_revenue_city, aes(x = reorder(City, AvgRevenue), y = AvgRevenue, fill = City)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = 'Average Revenue per Trip by City', x = 'City', y = 'Average Revenue') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Save the plot
+ggsave("avg_revenue_city.png")
+
+```
+
+Hypothesis results: New York, NY has the highest revenue, this is probably because there is a large population.
+
+#### Hypothesis 4: There is a noticeable seasonal trend in the number of trips, with certain months having higher or lower trip counts.
+
+-   This hypothesis suggests that the number of cab trips fluctuates throughout the year, with some months experiencing more trips due to seasonal events, weather conditions, or holiday periods.
+
+```{r}
+# Extract month from 'Date of Travel'
+merged_data <- merged_data %>%
+  mutate(Month = format(`Date of Travel`, "%m"))
+
+# Calculate the number of trips per month
+monthly_trips <- merged_data %>%
+  group_by(Month, Company) %>%
+  summarise(TripCount = n()) %>%
+  ungroup()
+
+# Plot seasonal trend in the number of trips
+ggplot(monthly_trips, aes(x = Month, y = TripCount, color = Company, group = Company)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(title = 'Seasonal Trend in the Number of Trips by Company', x = 'Month', y = 'Number of Trips') +
+  theme_minimal()
+
+# Save the plot
+ggsave("seasonal_trend_trips.png")
+
+```
+
+Hypothesis results: December has the highest number of trips for both companies: Yellow cab is still higher during all months compared to the Pink Cab.
+
+#### Hypothesis 5: One company has a higher number of cab users at a particular time period compared to the other.
+
+```{r}
+# Extract month and year from 'Date of Travel'
+merged_data <- merged_data %>%
+  mutate(YearMonth = format(`Date of Travel`, "%Y-%m"))
+
+# Calculate the number of unique users per month for each company
+unique_users <- merged_data %>%
+  group_by(YearMonth, Company) %>%
+  summarise(UniqueUsers = n_distinct(`Customer ID`)) %>%
+  ungroup()
+
+# Plot the number of unique users for each company over time
+ggplot(unique_users, aes(x = YearMonth, y = UniqueUsers, color = Company, group = Company)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(title = 'Number of Unique Users Over Time by Company', x = 'Year-Month', y = 'Number of Unique Users') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+Hypothesis results: From 2016-01 to 2018-12, Yellow Cab's number of unique users remain to be higher than the Pink Cab's.
+
+#### Hypothesis 6: The margin (revenue minus cost) proportionally increases with the increase in the number of customers
+
+```{r}
+# Calculate the margin for each trip (revenue minus cost)
+merged_data <- merged_data %>%
+  mutate(Margin = `Price Charged` - `Cost of Trip`)
+
+# Calculate the total number of customers and total margin for each company
+customer_margin <- merged_data %>%
+  group_by(Company) %>%
+  summarise(TotalCustomers = n_distinct(`Customer ID`), TotalMargin = sum(Margin, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot the relationship between the number of customers and the total margin
+ggplot(customer_margin, aes(x = TotalCustomers, y = TotalMargin, color = Company)) +
+  geom_point(size = 4) +
+  labs(title = 'Relationship Between Number of Customers and Total Margin', x = 'Total Number of Customers', y = 'Total Margin') +
+  theme_minimal()
+
+```
+
+Hypothesis results: It seems that the margin of Yellow Cab is almost five times higher than the Pink Cab's.
+
+#### Hypothesis 7: Different customer segments have distinct attributes such as age, income, and gender distribution
+
+```{r}
+# Segment customers based on attributes such as age, income, and gender
+customer_segments <- merged_data %>%
+  group_by(`Customer ID`, Gender, Age, `Income (USD/Month)`) %>%
+  summarise(TotalTrips = n(), AvgRevenue = mean(`Price Charged`, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot age distribution by gender
+ggplot(customer_segments, aes(x = Age, fill = Gender)) +
+  geom_histogram(binwidth = 5, position = "dodge") +
+  labs(title = 'Age Distribution by Gender', x = 'Age', y = 'Count') +
+  theme_minimal()
+
+
+# Plot income distribution by gender
+ggplot(customer_segments, aes(x = `Income (USD/Month)`, fill = Gender)) +
+  geom_histogram(binwidth = 1000, position = "dodge") +
+  labs(title = 'Income Distribution by Gender', x = 'Income (USD/Month)', y = 'Count') +
+  theme_minimal()
+
+
+# Plot total trips by gender
+ggplot(customer_segments, aes(x = Gender, y = TotalTrips, fill = Gender)) +
+  geom_boxplot() +
+  labs(title = 'Total Trips by Gender', x = 'Gender', y = 'Total Trips') +
+  theme_minimal()
+
+
+```
+
+Hypothesis results: The most popular users of cab are mostly males between 20 and 30, with approximately 15k income.
+
+#### Hypothesis 8: One company has higher revenue and profits compared to the other one. 
+
+```{r}
+# Calculate the total revenue and profit (margin) for each company
+company_financials <- merged_data %>%
+  group_by(Company) %>%
+  summarise(TotalRevenue = sum(`Price Charged`, na.rm = TRUE),
+            TotalCost = sum(`Cost of Trip`, na.rm = TRUE)) %>%
+  mutate(TotalProfit = TotalRevenue - TotalCost) %>%
+  ungroup()
+
+# Print the company financials
+print(company_financials)
+
+# Plot total revenue for each company
+ggplot(company_financials, aes(x = Company, y = TotalRevenue, fill = Company)) +
+  geom_bar(stat = "identity") +
+  labs(title = 'Total Revenue by Company', x = 'Company', y = 'Total Revenue') +
+  theme_minimal()
+
+# Plot total profit for each company
+ggplot(company_financials, aes(x = Company, y = TotalProfit, fill = Company)) +
+  geom_bar(stat = "identity") +
+  labs(title = 'Total Profit by Company', x = 'Company', y = 'Total Profit') +
+  theme_minimal()
+```
+
+Hypothesis results: Yellow Cab has almost 7 times bigger profit and 5 times bigger revenue.
+
+### Recommendation:
+
+**Investment Recommendation: Yellow Cab**
+
+After conducting an extensive exploratory data analysis (EDA) on the cab usage data from 2016 to 2018, I recommend investing in Yellow Cab over Pink Cab. The analysis reveals several key insights that support this recommendation:
+
+1.  **Higher Customer Retention Rate**:
+
+    -   Yellow Cab has demonstrated a higher customer retention rate compared to Pink Cab. This indicates stronger customer loyalty and suggests that Yellow Cab is more effective at retaining its customers over time.
+
+2.  **Greater Revenue**:
+
+    -   The total revenue generated by Yellow Cab is significantly higher than that of Pink Cab. This reflects a larger customer base and/or higher average spending per trip, making Yellow Cab a more profitable option.
+
+3.  **Higher Profit Margins**:
+
+    -   Yellow Cab shows higher profit margins (revenue minus cost) compared to Pink Cab. This indicates better cost management and pricing strategies, leading to increased profitability.
+
+4.  **More Users**:
+
+    -   Yellow Cab has attracted a larger number of unique users over the analyzed period. This broader user base indicates a stronger market presence and higher brand recognition.
+
+5.  **Seasonal and Holiday Trends**:
+
+    -   Yellow Cab experiences consistent usage trends across different seasons and holidays, further indicating a reliable and steady demand for its services.
+
+### Potential Considerations
+
+-   **Cost of Investment**:
+
+    -   While Yellow Cab shows higher revenue and profit, it may also come with a higher investment cost. It is essential to consider the initial and ongoing investment required to achieve and maintain these high returns.
+
+-   **Market Competition**:
+
+    -   The cab industry is highly competitive, and maintaining a competitive edge requires continuous investment in technology, customer service, and marketing. Yellow Cab\'s strong performance suggests it is well-positioned, but staying ahead will require ongoing efforts.
+
+### Conclusion
+
+Based on the analysis, Yellow Cab emerges as the better investment choice due to its superior financial performance, customer retention, and market presence. Although it may require a larger initial investment, the potential returns and market advantages make Yellow Cab a compelling option for investment.
